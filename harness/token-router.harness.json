@@ -1,0 +1,116 @@
+{
+  "harness": {
+    "name": "token-router",
+    "version": "3.1.0",
+    "type": "router-executor-dual-agent",
+    "description": "Smart LLM Router & Token Cost Optimizer — routes tasks to optimal model tiers (L0-L3)"
+  },
+  "agent_definitions": {
+    "TokenRouter": {
+      "role": "router",
+      "model_hint": "L0 (e.g. Gemini 2.5 Flash-Lite, DeepSeek V4 Flash)",
+      "tools": ["complexity_scorer", "safety_checker", "model_selector"],
+      "memory_keys": ["token_router_profile", "learning_registry"],
+      "include_sections_from_skill": [
+        "第一步：任务复杂度评估",
+        "第二步：映射到模型层级",
+        "第三步：安全检查",
+        "用户偏好（渐进式画像）",
+        "自修复闭环"
+      ]
+    },
+    "ModelExecutor": {
+      "role": "executor",
+      "model_hint": "dynamic (assigned by TokenRouter)",
+      "tools": ["quality_self_check"],
+      "include_sections_from_skill": [
+        "Agent-2: ModelExecutor",
+        "质量自检"
+      ]
+    },
+    "SessionMonitor": {
+      "role": "monitor",
+      "model_hint": "L0 (minimal token cost)",
+      "tools": ["session_trace", "health_indicator"],
+      "include_sections_from_skill": [
+        "Runtime 主动监控",
+        "会话追踪日志",
+        "关键健康指标"
+      ]
+    }
+  },
+  "workflow": {
+    "type": "router-execute-report",
+    "steps": [
+      {"agent": "TokenRouter", "action": "receive_task", "output": "route_instruction"},
+      {"agent": "TokenRouter", "action": "assess_complexity", "input": ["4-dimension scoring"]},
+      {"agent": "TokenRouter", "action": "apply_safety_rules", "fallback_tier": "L2"},
+      {"agent": "TokenRouter", "action": "check_learning_registry", "memory_key": "learning_registry"},
+      {"agent": "TokenRouter", "action": "emit_route", "format": "ROUTE: ..."},
+      {"agent": "ModelExecutor", "action": "execute", "input": "route_instruction"},
+      {"agent": "ModelExecutor", "action": "quality_check", "threshold": 0.8},
+      {"agent": "ModelExecutor", "action": "emit_result", "format": "Q_REPORT: ..."},
+      {"agent": "SessionMonitor", "action": "record_trace", "memory_key": "session_trace"},
+      {"agent": "SessionMonitor", "action": "check_health", "thresholds": {"rejection_rate": 0.3, "l3_ratio": 0.15}},
+      {"agent": "SessionMonitor", "action": "trigger_self_healing", "condition": "quality_score <=1 or user_rejected"}
+    ]
+  },
+  "input_schema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["task"],
+    "properties": {
+      "task": {"type": "string", "description": "The task description or query"},
+      "context": {"type": "string", "description": "Optional: code, file content, or prior conversation"},
+      "mode": {"type": "string", "enum": ["interactive", "batch", "cascade"], "default": "interactive"},
+      "strategy": {"type": "string", "enum": ["cost_first", "quality_first", "balanced", "auto"], "default": "auto"}
+    }
+  },
+  "output_schema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["tier", "model", "cost_estimate"],
+    "properties": {
+      "tier": {"type": "string", "enum": ["L0", "L1", "L2", "L3"]},
+      "model": {"type": "string"},
+      "cost_estimate": {
+        "type": "object",
+        "properties": {
+          "usd": {"type": "number"},
+          "vs_flagship_usd": {"type": "number"},
+          "savings_pct": {"type": "number"}
+        }
+      },
+      "complexity_score": {"type": "integer", "minimum": 4, "maximum": 20},
+      "safety_override": {"type": "string"},
+      "self_healing": {"type": "boolean"},
+      "quality_report": {
+        "type": "object",
+        "properties": {
+          "score": {"type": "integer", "minimum": 1, "maximum": 5},
+          "issues": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  },
+  "tier_mapping": {
+    "L0": {"models": ["deepseek-v4-flash", "gpt-4.1-nano", "gemini-2.5-flash-lite"], "price_ceil_per_mtok": 0.50},
+    "L1": {"models": ["claude-haiku-4.5", "minimax-m3", "gemini-3.5-flash"], "price_ceil_per_mtok": 5.00},
+    "L2": {"models": ["claude-sonnet-4.6", "gpt-5.5", "qwen-3.7-max"], "price_ceil_per_mtok": 20.00},
+    "L3": {"models": ["claude-opus-4.8", "gpt-5.5-pro", "o3"], "price_ceil_per_mtok": 50.00}
+  },
+  "safety_rules": [
+    {"trigger": ["支付", "金钱交易", "payment"], "min_tier": "L2", "reason": "金融相关任务需要高精度"},
+    {"trigger": ["法律", "医疗", "合规", "legal", "medical"], "min_tier": "L3", "recommended": "L3"},
+    {"trigger": ["生产环境", "部署", "production", "deploy"], "min_tier": "L2"},
+    {"trigger": ["安全审计", "漏洞", "security", "vulnerability"], "min_tier": "L2"}
+  ],
+  "batch_config": {
+    "providers": [
+      {"name": "openai", "batch_discount_pct": 50, "max_completion_window_hours": 24},
+      {"name": "anthropic", "batch_discount_pct": 50, "max_completion_window_hours": 24},
+      {"name": "google", "batch_discount_pct": 50, "max_completion_window_hours": 24}
+    ],
+    "min_task_count_for_batch": 100
+  }
+}

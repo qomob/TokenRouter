@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Report artifacts (regenerated on each run)
+evals/pricing-report.json
+eval-report.json
